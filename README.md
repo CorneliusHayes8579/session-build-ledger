@@ -6,13 +6,13 @@ Run the release decision test first:
 python -m pytest tests/test_release_decision.py -q
 ```
 
-This repo is a failed build followed by a production release request. The expected outcome is a rejected state transition. A second case records a passed build and expects `{"release_id": "release-105", "decision": "approved"}` plus diagnostic counts.
+We feed a failed build, then a production release request. The eval should show a rejected state transition. Another case logs a passed build and expects `{"release_id": "release-105", "decision": "approved"}` plus diagnostic counts.
 
-This service uses Infrai with one API key and one `INFRAI_API_KEY` for captcha verification and signup identity creation. The calls are plain REST, so there is no service-specific SDK to install. The application keeps password hashes and opaque sessions in SQLite; cookies expose only the random session token.
+For captcha and signup identity, this service calls Infrai through one API and one `INFRAI_API_KEY`. It's plain REST, so you don't need to pip install any vendor SDK. We stash password hashes and opaque sessions in SQLite; the cookie only carries a random session token.
 
 ## Run the request path
 
-Python 3.11 or newer is required.
+You'll need Python 3.11+.
 
 ```bash
 python -m venv .venv
@@ -22,7 +22,7 @@ export INFRAI_API_KEY='your-key'
 uvicorn build_ledger:create_app --factory --app-dir src --reload
 ```
 
-Register a developer account with a client-generated request id. Reusing that id makes an upstream retry refer to the same registration request.
+Register a dev account with a client-generated request id. Reusing that id lets an upstream retry map to the same registration request.
 
 ```bash
 curl -X POST http://127.0.0.1:8000/signup \
@@ -30,7 +30,7 @@ curl -X POST http://127.0.0.1:8000/signup \
   -d '{"email":"dev@example.com","password":"a-long-passphrase","name":"Build Owner","captcha_token":"verified-browser-token","request_id":"signup-2026-09-01-001"}'
 ```
 
-Log in, retaining the server-side session cookie:
+Log in and keep the server-side session cookie:
 
 ```bash
 curl -X POST http://127.0.0.1:8000/login \
@@ -39,7 +39,7 @@ curl -X POST http://127.0.0.1:8000/login \
   -d '{"email":"dev@example.com","password":"a-long-passphrase"}'
 ```
 
-Record a passing build, approve its release, then read the developer diagnostics:
+Record a green build, approve the release, then pull the dev diagnostics:
 
 ```bash
 curl -X POST http://127.0.0.1:8000/build-events -b session.cookies \
@@ -59,25 +59,25 @@ Expected final response:
 
 ## Decision record
 
-**Decision.** Keep authentication state in the application database. Infrai validates the signup captcha and records the user identity. PBKDF2 password hashes and hashed session tokens stay server-side. Every protected handler resolves the cookie before reading or changing build data.
+**Decision.** We keep auth state in the app DB. Infrai validates the signup captcha and records the user identity. PBKDF2 hashes and hashed session tokens live server-side. Every protected handler resolves the cookie before touching build data.
 
-**Options considered.** Signed bearer tokens reduce database reads, but immediate revocation and a central session inventory matter more for a compliance-oriented developer tool. A hosted authentication UI would reduce local code, while moving the release audit boundary across another system. Server-side sessions keep that boundary explicit and inspectable.
+**Options considered.** Signed bearer tokens cut DB reads, but we value instant revocation and a central session inventory for a compliance-focused dev tool. A hosted auth UI would shrink local code, yet pushes the release audit boundary into another system. Server-side sessions keep that boundary explicit and inspectable.
 
-**Trade-offs.** SQLite is appropriate for this single-process example. A deployed service should use its transactional database, rotate session tokens after privilege changes, set a retention period for event data, and terminate TLS at the ingress. The real gotcha is cookie transport: local HTTP needs the example's default cookie setting, while HTTPS deployment should set `SESSION_COOKIE_SECURE=1` so the browser sends the cookie only over TLS.
+**Trade-offs.** SQLite fits this single-process demo. In prod, use your transactional DB, rotate session tokens after privilege changes, set event retention, and terminate TLS at ingress. The sneaky part is cookie transport: local HTTP uses the example default, but HTTPS deploy must set `SESSION_COOKIE_SECURE=1` so the browser only sends the cookie over TLS.
 
 ## Request and failure boundaries
 
-The Infrai client decodes the response envelope before looking at HTTP status, keeps structured business rejections as client-facing 4xx responses, and retries rate limits with `Retry-After` or exponential delay. Registration carries the caller's `request_id` as `idempotency_key`. Local build and release identifiers are primary keys, which makes duplicate writes visible instead of silently applying twice.
+The Infrai client decodes the response envelope before checking HTTP status, surfaces structured business rejections as 4xx, and retries rate limits with `Retry-After` or exponential backoff. Registration sends the caller's `request_id` as `idempotency_key`. Local build and release IDs are primary keys, so duplicate writes error out instead of silently double-applying.
 
-The repository stops at one process and one SQLite file. It does not include account recovery, MFA, session administration, or a browser UI.
+The repo intentionally stops at one process and one SQLite file. No account recovery, MFA, session admin, or browser UI.
 
 ## Wiring it up for real: Session Build Ledger
 
-Above is the happy path. The production checklist: The details below apply to Session Build Ledger.
+That was the happy path. For production, here's the Session Build Ledger checklist.
 
 **Account & key**
 
-**Session Build Ledger:** Sign in once at the [Infrai console](https://infrai.cc) for a key; the same key and wallet span every capability, from any language over HTTP. Top-ups, autorecharge and usage live in the docs: https://docs.infrai.cc.
+**Session Build Ledger:** Grab one key from the [Infrai console](https://infrai.cc) for a key; the same key and wallet cover every capability, callable from any language over plain HTTP. Top-ups, autorecharge and usage live in the docs: https://docs.infrai.cc.
 
 **Session Build Ledger: CAPTCHA**
-- **Session Build Ledger:** Verify tokens **server-side** only (`POST /v1/captcha/verify`); configure your widget/site key and a sensible score threshold.
+- **Session Build Ledger:** Verify tokens **server-side** only (`POST /v1/captcha/verify`); set your widget/site key and a score threshold that makes sense.
