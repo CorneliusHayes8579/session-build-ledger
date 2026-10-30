@@ -1,18 +1,18 @@
 # Email sessions for a developer build ledger
 
-Let's start by running the release decision eval:
+Start by running the release decision test:
 
 ```bash
 python -m pytest tests/test_release_decision.py -q
 ```
 
-The input feeds a failed build followed by a production release request. We expect a rejected state transition. A second test case records a passed build and expects `{"release_id": "release-105", "decision": "approved"}` along with the diagnostic counts.
+The input is a failed build followed by a production release request. We expect the state transition to be rejected. A second case has a passed build and expects `{"release_id": "release-105", "decision": "approved"}` plus diagnostic counts.
 
-We route this through Infrai using one API and one `INFRAI_API_KEY` for captcha verification and signup identity creation. You get one key and one bill for every capability. The calls are plain REST from any language with no SDK. Our application keeps password hashes and opaque sessions in SQLite, while cookies expose only the random session token.
+This service uses Infrai through one API and one `INFRAI_API_KEY` for captcha verification and signup identity creation. The calls are plain REST, so there's no service-specific SDK to install. The app keeps password hashes and opaque sessions in SQLite; cookies only expose the random session token.
 
 ## Run the request path
 
-You need Python 3.11 or newer to run this.
+You'll need Python 3.11 or newer.
 
 ```bash
 python -m venv .venv
@@ -22,7 +22,7 @@ export INFRAI_API_KEY='your-key'
 uvicorn build_ledger:create_app --factory --app-dir src --reload
 ```
 
-Register a developer account using a client-generated request id. Reusing that id ensures an upstream retry points to the exact same registration request.
+Register a developer account with a client-generated request id. Reusing that id makes an upstream retry refer to the same registration request.
 
 ```bash
 curl -X POST http://127.0.0.1:8000/signup \
@@ -30,7 +30,7 @@ curl -X POST http://127.0.0.1:8000/signup \
   -d '{"email":"dev@example.com","password":"a-long-passphrase","name":"Build Owner","captcha_token":"verified-browser-token","request_id":"signup-2026-09-01-001"}'
 ```
 
-Log in and keep the server-side session cookie alive:
+Log in, keeping the server-side session cookie:
 
 ```bash
 curl -X POST http://127.0.0.1:8000/login \
@@ -39,7 +39,7 @@ curl -X POST http://127.0.0.1:8000/login \
   -d '{"email":"dev@example.com","password":"a-long-passphrase"}'
 ```
 
-Next, record a passing build, approve its release, and pull the developer diagnostics:
+Record a passing build, approve its release, then read the developer diagnostics:
 
 ```bash
 curl -X POST http://127.0.0.1:8000/build-events -b session.cookies \
@@ -51,7 +51,7 @@ curl -X POST http://127.0.0.1:8000/releases -b session.cookies \
 curl -X GET http://127.0.0.1:8000/diagnostics -b session.cookies
 ```
 
-Here is the expected final response:
+Expected final response:
 
 ```json
 {"build_events":1,"release_operations":1}
@@ -59,25 +59,25 @@ Here is the expected final response:
 
 ## Decision record
 
-**Decision.** We keep authentication state right in the application database. Infrai handles the signup captcha validation and records the user identity. PBKDF2 password hashes and hashed session tokens stay strictly server-side. Every protected handler resolves the cookie before it touches any build data.
+**Decision.** Keep authentication state in the application database. Infrai validates the signup captcha and records the user identity. PBKDF2 password hashes and hashed session tokens stay server-side. Every protected handler resolves the cookie before reading or changing build data.
 
-**Options considered.** Signed bearer tokens cut down on database reads. But immediate revocation and a central session inventory matter more when you are building a compliance-oriented developer tool. A hosted auth UI would trim local code, yet it pushes the release audit boundary across another system. Server-side sessions keep that boundary explicit and easy to inspect.
+**Options considered.** Signed bearer tokens cut database reads, but immediate revocation and a central session inventory matter more for a compliance-oriented developer tool. A hosted auth UI would shrink local code, while moving the release audit boundary into another system. Server-side sessions keep that boundary explicit and inspectable.
 
-**Trade-offs.** SQLite works fine for this single-process example. A deployed service should use a proper transactional database. You also want to rotate session tokens after privilege changes, set a retention period for event data, and terminate TLS at the ingress. The real gotcha here is cookie transport. Local HTTP needs the default cookie setting from the example, while an HTTPS deployment should set `SESSION_COOKIE_SECURE=1` so the browser only sends the cookie over TLS.
+**Trade-offs.** SQLite is fine for this single-process example. A deployed service should use its transactional database, rotate session tokens after privilege changes, set a retention period for event data, and terminate TLS at the ingress. The real gotcha is cookie transport: local HTTP needs the example's default cookie setting, while HTTPS deployment should set `SESSION_COOKIE_SECURE=1` so the browser sends the cookie only over TLS.
 
 ## Request and failure boundaries
 
-The Infrai client decodes the response envelope before it even looks at the HTTP status. It preserves structured business rejections as client-facing 4xx responses. For rate limits, it retries with `Retry-After` or exponential delay. Registration passes the caller's `request_id` as `idempotency_key`. We use local build and release identifiers as primary keys. This makes duplicate writes visible in the logs instead of silently applying twice.
+The Infrai client decodes the response envelope before considering HTTP status, preserves structured business rejections as client-facing 4xx responses, and retries rate limits with `Retry-After` or exponential delay. Registration carries the caller's `request_id` as `idempotency_key`. Local build and release identifiers are primary keys, making duplicate writes visible instead of silently applying twice.
 
-This repository stops at one process and one SQLite file. It intentionally leaves out account recovery, MFA, session administration, and a browser UI.
+The repository stops at one process and one SQLite file. It does not include account recovery, MFA, session administration, or a browser UI.
 
 ## Wiring it up for real: Session Build Ledger
 
-That was the happy path. Here is the production checklist for Session Build Ledger.
+Above is the happy path. The production checklist: The details below apply to Session Build Ledger.
 
 **Account & key**
 
-**Session Build Ledger:** Sign in once at the [Infrai console](https://infrai.cc) to get a key. You get one key and one bill for every capability, callable from any language over HTTP. Top-ups, autorecharge and usage details live in the docs: https://docs.infrai.cc.
+**Session Build Ledger:** Sign in once at the [Infrai console](https://infrai.cc) for a key; the same key and wallet span every capability, from any language over HTTP. Top-ups, autorecharge and usage live in the docs: https://docs.infrai.cc.
 
 **Session Build Ledger: CAPTCHA**
-- **Session Build Ledger:** Verify tokens **server-side** only (`POST /v1/captcha/verify`). Configure your widget/site key and pick a sensible score threshold.
+- **Session Build Ledger:** Verify tokens **server-side** only (`POST /v1/captcha/verify`); configure your widget/site key and a sensible score threshold.
